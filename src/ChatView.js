@@ -85,8 +85,16 @@ define(function(require, exports, module) {
 
         // Create view for scrollField
         var scrollFieldView = new View();
+
+        var w = window,
+            d = document,
+            e = d.documentElement,
+            g = d.getElementsByTagName('body')[0],
+            windowWidth = w.innerWidth || e.clientWidth || g.clientWidth,
+            windowHeight = w.innerHeight|| e.clientHeight|| g.clientHeight;
+        
         var scrollFieldViewMod = new StateModifier({
-            size: [undefined, (400 - 35)],
+            size: [undefined, (windowHeight - 35)],
             origin: [0.0, 0.0],
             align: [0.0, 0.0]
         });

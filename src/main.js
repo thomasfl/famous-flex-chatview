@@ -24,24 +24,28 @@ define(function(require) {
     var FastClick = require('fastclick/lib/fastclick');
     FastClick.attach(document.body);
 
-    // import dependencies
+    // Include famo.us dependencies
     var Firebase = require('firebase/lib/firebase-web');
-    // famous
     var Engine = require('famous/core/Engine');
-    var View = require('famous/core/View');
     var ViewSequence = require('famous/core/ViewSequence');
     var Surface = require('famous/core/Surface');
     var Modifier = require('famous/core/Modifier');
     var Transform = require('famous/core/Transform');
+    var Transitionable = require('famous/transitions/Transitionable');
+    var Easing = require('famous/transitions/Easing');
+    var View = require('famous/core/View');
+    var EdgeSwapper = require('famous/views/EdgeSwapper');
+    var Timer = require('famous/utilities/Timer');
+    var InputSurface = require('famous/surfaces/InputSurface');
     var StateModifier = require('famous/modifiers/StateModifier');
-    // famous-flex
+
+    // Include famous-flex
     var FlexScrollView = require('famous-flex/FlexScrollView');
     var HeaderFooterLayout = require('famous-flex/layouts/HeaderFooterLayout');
     var LayoutController = require('famous-flex/LayoutController');
     var Lagometer = require('famous-lagometer/Lagometer');
     var AutosizeTextareaSurface = require('famous-autosizetextarea/AutosizeTextareaSurface');
-    var Timer = require('famous/utilities/Timer');
-    var InputSurface = require('famous/surfaces/InputSurface');
+
     var RefreshLoader = require('famous-refresh-loader/RefreshLoader');
     var moment = require('moment/moment');
     var cuid = require('cuid');
@@ -49,49 +53,493 @@ define(function(require) {
     var chatBubbleTemplate = require('./chat-bubble.handlebars');
     var daySectionTemplate = require('./day-section.handlebars');
 
-    // Components
-    var ChatView = require('./ChatView');
-
+    // Initialize
     var mainContext = Engine.createContext();
+    var edgeswapper = new EdgeSwapper();
+    mainContext.add(edgeswapper);
 
-    var pageBackground = new Surface({
-        content: 'page background',
-        properties: {
-            backgroundColor: 'yellow'
+    var viewSequence = new ViewSequence();
+    _createPullToRefreshCell();
+    _setupFirebase();
+    // mainContext.add(_createMainLayout()); // Original setup
+
+
+    // mainView / front page
+
+
+    var chatView = _createChatView();
+    // edgeswapper.show(chatView);
+
+    var mainView = _createMainView();
+
+    edgeswapper.show(mainView);
+
+    // loginButton.on('click', function() {
+    //     edgeswapper.show(chatView);
+    // });
+
+
+    function _createMainView() {
+        var mainView = new View();
+        var mainViewModifier = new StateModifier({
+            size: [undefined,undefined],
+            origin: [0.0, 0.0],
+            align: [0.0, 0.0]
+        });
+        var mainViewNode = mainView.add(mainViewModifier);
+        var mainViewBackgroundSurface = new Surface({    
+            content: '',
+            properties: {
+                backgroundColor: '#fa5c4f',
+                color: 'white'
+            }
+        });
+
+        mainViewNode.add(mainViewBackgroundSurface);
+        var loginButton = new Surface({
+            size: [300, 50],
+            content: 'Enter chat',
+            properties: {
+                lineHeight: '50px',
+                textAlign: 'center',
+                backgroundColor: 'grey',
+                color: 'white'
+            }
+        });
+        var loginButtonMod = new Modifier({
+            align: [0.5, 0.5],
+            origin: [0.5, 0.5]
+        });
+        mainViewNode.add(loginButtonMod).add(loginButton);
+        loginButton.on('click', function() {
+            edgeswapper.show(chatView);
+        });
+        return mainView;
+    }
+    
+    function _createChatView() {
+        var chatView = new View();
+        var chatViewModifier = new StateModifier({
+            size: [undefined,undefined],
+            origin: [0.0, 0.0],
+            align: [0.0, 0.0]
+        });
+        var chatViewNode = chatView.add(chatViewModifier);
+        chatViewNode.add(_createMainLayout());
+        return chatView;
+    }
+
+    //_createLagometer();
+    //_loadDemoData();
+
+    //
+    // Main layout, bottom text input, top chat messages
+    //
+    var mainLayout;
+    function _createMainLayout() {
+        mainLayout = new LayoutController({
+            layout: HeaderFooterLayout,
+            layoutOptions: {
+                headerHeight: 34,
+                footerHeight: 50
+            },
+            dataSource: {
+                header: _createNameBar(),
+                content: _createScrollView(),
+                footer: _createMessageBar()
+            }
+        });
+        return mainLayout;
+    }
+
+    //
+    // Creates the top input field for the name
+    //
+    var nameBar;
+    function _createNameBar() {
+        nameBar = new InputSurface({
+            classes: ['name-input'],
+            placeholder: 'Your name...',
+            value: localStorage.name
+        });
+        nameBar.on('change', function() {
+            localStorage.name = nameBar.getValue();
+        });
+        return nameBar;
+    }
+
+    //
+    // Message-bar holding textarea input and send button
+    //
+    var messageBar;
+    function _createMessageBar() {
+        var back = new Surface({
+            classes: ['message-back']
+        });
+        messageBar = new LayoutController({
+            layout: {dock: [
+                ['fill', 'back'],
+                ['left', undefined, 8],
+                ['top', undefined, 8],
+                ['right', undefined, 8],
+                ['bottom', undefined, 8],
+                ['right', 'send', undefined, 1],
+                ['fill', 'input', 1]
+            ]},
+            dataSource: {
+                back: back,
+                input: _createMessageInput(),
+                send: _createSendButton()
+            }
+        });
+        return messageBar;
+    }
+
+
+
+
+    //
+    // Message-input textarea
+    //
+    var messageInputTextArea;
+    function _createMessageInput() {
+        messageInputTextArea = new AutosizeTextareaSurface({
+            classes: ['message-input'],
+            placeholder: 'famous-flex-chat...',
+            properties: {
+                resize: 'none'
+            }
+        });
+        messageInputTextArea.on('scrollHeightChanged', _updateMessageBarHeight);
+        messageInputTextArea.on('keydown', function(e) {
+            // if (e.keyCode === 13) {
+            //     e.preventDefault();
+            //     _sendMessage();
+            // }
+        });
+        return messageInputTextArea;
+    }
+
+    //
+    // Updates the message-bar height to accomate for the text that
+    // was entered in the message text-area.
+    //
+    function _updateMessageBarHeight() {
+        var height = Math.max(Math.min(messageInputTextArea.getScrollHeight() + 16, 200), 50);
+        if (mainLayout.getLayoutOptions().footerHeight !== height) {
+            mainLayout.setLayoutOptions({
+                footerHeight: height
+            });
+            return true;
         }
-    });
-    var backModifier = new StateModifier({
-        // positions the background behind the tab surface
-        transform: Transform.behind
-    });
-    mainContext.add(backModifier).add(pageBackground);
+        return false;
+    }
 
-    var pageView = new View();
-    var pageViewModifier = new StateModifier({
-        size: [400,400],
-        origin: [0.5, 0.8],
-        align: [0.5, 0.5]
-    });
-    var pageViewNode = pageView.add(pageViewModifier);
+    //
+    // Create send button
+    //
+    function _createSendButton() {
+        var button = new Surface({
+            classes: ['message-send'],
+            content: 'Send',
+            size: [60, undefined]
+        });
+        button.on('click', _sendMessage);
+        return button;
+    }
 
-    mainContext.add(pageView);
+    //
+    // Create scrollview
+    //
+    var scrollView;
+    function _createScrollView() {
+        scrollView = new FlexScrollView({
+            layoutOptions: {
+                // callback that is called by the layout-function to check
+                // whether a node is a section
+                isSectionCallback: function(renderNode) {
+                    return renderNode.properties.isSection;
+                },
+                margins: [5, 0, 0, 0]
+            },
+            dataSource: viewSequence,
+            autoPipeEvents: true,
+            flow: true,
+            alignment: 1,
+            mouseMove: true,
+            debug: false,
+            pullToRefreshHeader: pullToRefreshHeader
+        });
+        return scrollView;
+    }
 
-    var backgroundSurface = new Surface({    
-        content: 'Main view',
-        properties: {
-            backgroundColor: '#fa5c4f',
-            color: 'white'
+    //
+    // Adds a message to the scrollview
+    //
+    var afterInitialRefreshTimerId;
+    var afterInitialRefresh;
+    var firstKey;
+    function _addMessage(data, top, key) {
+        var time = moment(data.timeStamp || new Date());
+        data.time = time.format('LT');
+        if (!data.author || (data.author === '')) {
+            data.author = 'Anonymous bastard';
         }
+
+        // Store first key
+        firstKey = firstKey || key;
+        if (top && key) {
+            firstKey = key;
+        }
+
+        // Insert section
+        var day = time.format('LL');
+        if (!top && (day !== lastSectionDay)) {
+            lastSectionDay = day;
+            firstSectionDay = firstSectionDay || day;
+            scrollView.push(_createDaySection(day));
+        } else if (top && (day !== firstSectionDay)) {
+            firstSectionDay = day;
+            scrollView.insert(0, _createDaySection(day));
+        }
+
+        //console.log('adding message: ' + JSON.stringify(data));
+        var chatBubble = _createChatBubble(data);
+        if (top) {
+            scrollView.insert(1, chatBubble);
+        }
+        else {
+            scrollView.push(chatBubble);
+        }
+        if (!top) {
+
+            // Scroll the latest (newest) chat message
+            if (afterInitialRefresh) {
+                scrollView.goToLastPage();
+                scrollView.reflowLayout();
+            }
+            else {
+
+                // On startup, set datasource to the last page immediately
+                // so it doesn't scroll from top to bottom all the way
+                viewSequence = viewSequence.getNext() || viewSequence;
+                scrollView.setDataSource(viewSequence);
+                scrollView.goToLastPage();
+                if (afterInitialRefreshTimerId === undefined) {
+                    afterInitialRefreshTimerId = Timer.setTimeout(function() {
+                        afterInitialRefresh = true;
+                    }, 100);
+                }
+            }
+        }
+    }
+
+    //
+    // setup firebase
+    //
+    var fbMessages;
+    var firstSectionDay;
+    var lastSectionDay;
+    function _setupFirebase() {
+        fbMessages = new Firebase('https://famous-flex-chat.firebaseio.com/messages');
+        fbMessages.limitToLast(30).on('child_added', function(snapshot) {
+            _addMessage(snapshot.val(), false, snapshot.key());
+        });
+    }
+
+    //
+    // Create a chat-bubble
+    //
+    function _createChatBubble(data) {        
+        var bubbleClass = 'received';
+        if (data.userId === _getUserId()) {
+            bubbleClass = 'send';
+        }
+        var content = chatBubbleTemplate(data);
+        var surface = new Surface({
+            size: [undefined, true],
+            classes: ['message-bubble', bubbleClass],
+            content: content,
+            properties: {
+                message: data.message
+            }
+        });
+        surface.on("click", function(event) {
+
+            /* This is a simple POC of how to simulate an object zoom */
+
+            // var w = window,
+            // d = document,
+            // e = d.documentElement,
+            // g = d.getElementsByTagName('body')[0],
+            // windowWidth = w.innerWidth || e.clientWidth || g.clientWidth,
+            // windowHeight = w.innerHeight|| e.clientHeight|| g.clientHeight;
+
+            // console.log(JSON.stringify("x: " + event.pageX + ", y: " + event.pageY ));
+            // console.log("window.width(x): " + windowWidth + " windowHeight(y): " + windowHeight);
+            // console.log("surface: " + surface.getSize());
+
+            var zoomSurface = new Surface({
+                size: surface.getSize(), // [undefined, undefined],
+                // classes: ['message-bubble', bubbleClass],
+                origin: [0.5, 0.5],
+                content: '<div class="back"><span class="author"></span><div class="time"></div><div class="message"></div></div>', // content,
+                properties: {
+                    backgroundColor: '#DDD',
+                    borderRadius: '0px'
+                }
+            });
+            
+
+            var initialLocationMod = new StateModifier({
+                transform: Transform.translate(0, event.pageY - 23, 0)
+            });
+
+            
+
+            // 
+            var transitionable = new Transitionable(0);
+            var zoomModifier = new Modifier({
+                transform: function() {
+                    // cache the value of transitionable.get()
+                    // to optimize for performance
+                    var scale = transitionable.get();
+                    return Transform.scale(scale, scale, 1);
+                },
+                opacity: function() {
+                    return transitionable.get();
+                }
+            });
+
+            transitionable.set(2, {
+                duration: 2000, curve: Easing.outBack
+            });
+
+            mainContext.add(initialLocationMod).add(zoomModifier).add(zoomSurface);
+
+
+
+            // Add close button to upper left corner
+            var buttonTransitionable = new Transitionable(40);
+            var closeButton = new Surface({
+                size: [35, 35],
+                content: 'X',
+                properties: {
+                    backgroundColor: 'grey',
+                    lineHeight: '35px',
+                    textAlign: 'center'
+                }
+            });
+            var closeButtonMod = new Modifier({
+                origin: [0.0, 0.0],
+                align: [0.0, 0.0],
+                transform: Transform.translate(40, 50, 0)
+                // transform: Transform.translate(buttonTransitionable.get(), 100, 0)
+            });
+            // buttonTransitionable.set(150, {
+            //     duration: 2000, curve: Easing.outBack
+            // });
+            mainContext.add(closeButtonMod).add(closeButton);
+ 
+            
+ 
+            closeButton.on("click", function(event) {                
+                zoomSurface.setSize([35,35]);
+            });
+
+
+        }.bind(this));
+        return surface;
+    }
+
+    //
+    // Create a day section
+    //
+    function _createDaySection(day) {
+        return new Surface({
+            size: [undefined, 42],
+            classes: ['message-day'],
+            content: daySectionTemplate({text: day}),
+            properties: {
+                isSection: true
+            }
+        });
+    }
+
+    //
+    // Generates a unique id for every user so that received messages
+    // can be distinguished comming from this user or another user.
+    //
+    var userId;
+    function _getUserId() {
+        if (!userId) {
+            userId = localStorage.userId;
+            if (!userId) {
+                userId = cuid();
+                localStorage.userId = userId;
+            }
+        }
+        return userId;
+    }
+
+    //
+    // Sends a new message
+    //
+    function _sendMessage() {
+        var value = messageInputTextArea.getValue();
+        if (!value || (value === '')) {
+            return;
+        }
+        messageInputTextArea.setValue('');
+        fbMessages.push({
+            author: nameBar.getValue(),
+            userId: _getUserId(),
+            message: value,
+            timeStamp: new Date().getTime()
+        });
+        messageInputTextArea.focus();
+    }
+
+    /**
+     * Create pull to refresh header
+     */
+    var pullToRefreshHeader;
+    function _createPullToRefreshCell() {
+        pullToRefreshHeader = new RefreshLoader({
+            size: [undefined, 60],
+            pullToRefresh: true,
+            pullToRefreshBackgroundColor: 'white'
+        });
+    }
+    scrollView.on('refresh', function(event) {
+        var queryKey = firstKey;
+        fbMessages.endAt(null, firstKey).limitToLast(2).once('value', function(snapshot) {
+            var val = snapshot.val();
+            for (var key in val) {
+                if (key !== queryKey) {
+                    _addMessage(val[key], true, key);
+                }
+            }
+            Timer.setTimeout(function() {
+                scrollView.hidePullToRefresh(event.footer);
+            }, 200);
+        });
+
     });
 
-    var backModifier = new StateModifier({
-        // positions the background behind the tab surface
-        transform: Transform.behind
-    });
-
-    pageViewNode.add(backModifier).add(backgroundSurface);
-
-    var chatView = new ChatView({'username':'Ponny Jonny'});
-    pageViewNode.add(chatView);
-
+    //
+    // Shows the lagometer
+    //
+    function _createLagometer() {
+        var lagometerMod = new Modifier({
+            size: [100, 100],
+            align: [1.0, 0.0],
+            origin: [1.0, 0.0],
+            transform: Transform.translate(-10, 10, 1000)
+        });
+        var lagometer = new Lagometer({
+            size: lagometerMod.getSize()
+        });
+        mainContext.add(lagometerMod).add(lagometer);
+    }
 });
